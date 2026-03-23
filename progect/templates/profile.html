@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Мир Карт - Профиль</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        #map {
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="bg-image text-white" style="background-image: url('static/img/bg.png'); background-size: cover; background-repeat: no-repeat; background-position: center; min-height: 100vh; margin: 0;">
+
+<header class="py-3">
+    <div class="container">
+        <ul class="nav nav-pills justify-content-center">
+            <li class="nav-item"><a href="/index" class="nav-link">Главная</a></li>
+            <li class="nav-item"><a href="/support" class="nav-link">Поддержка</a></li>
+            <li class="nav-item"><a href="/profile" class="nav-link active">Маршруты пользователей</a></li>
+        </ul>
+    </div>
+</header>
+
+<main class="container text-center py-5">
+    <h1 class="display-5 fw-bold">Мои сохраненные маршруты</h1>
+
+    <!-- Список сессий -->
+    <div id="sessions-list" class="mt-4">
+        {% if sessions %}
+            {% for session in sessions %}
+                <div class="card mb-3 mx-auto" style="max-width: 600px; background: rgba(255, 255, 255, 0.9);">
+                    <div class="card-body text-dark">
+                        <h5 class="card-title">{{ session.route_name or 'Маршрут без названия' }}</h5>
+                        <p class="card-text">
+                            <strong>Дата создания:</strong> {{ session.created_at.strftime('%d.%m.%Y %H:%M') }}<br>
+                            <strong>Длина:</strong> {{ (session.route_length / 1000)|round(2) if session.route_length else 0 }} км<br>
+                            <strong>Тип:</strong> {{ 'По дорогам' if session.use_roads else 'Прямые линии' }}
+                        </p>
+                        <button class="btn btn-primary me-2" onclick="loadMarkers('{{ session.session_id }}')">Открыть маршрут</button>
+                        <button class="btn btn-danger" onclick="deleteSession('{{ session.session_id }}', this)">Удалить маршрут</button>
+                    </div>
+                </div>
+            {% endfor %}
+        {% else %}
+            <p class="text-white">У вас пока нет сохраненных маршрутов</p>
+        {% endif %}
+    </div>
+
+    <!-- Информация о текущем маршруте -->
+    <div id="route-info" style="display: none; background: rgba(255, 255, 255, 0.9); color: #000; padding: 15px; border-radius: 10px; margin: 20px auto; max-width: 600px;">
+        <h5 id="current-route-name">Название маршрута</h5>
+        <p><strong>Длина:</strong> <span id="current-route-length">0 км</span></p>
+        <p><strong>Количество точек:</strong> <span id="current-markers-count">0</span></p>
+    </div>
+
+    <!-- Контейнер для карты -->
+    <div id="map" style="width: 100%; height: 400px; margin: 20px 0;"></div>
+</main>
+
+<footer class="text-center py-3">
+</footer>
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+    let myMap;
+    let markers = [];
+    let routeLayer = null;
+
+    // Инициализация карты без атрибуции
+    myMap = L.map('map', {
+        attributionControl: false
+    }).setView([55.76, 37.64], 10);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+    }).addTo(myMap);
+
+    // Функция для загрузки меток по сессии
+    function loadMarkers(sessionId) {
+        fetch(`/load-markers/${sessionId}`)
+            .then(response => response.json())
+            .then(data => {
+                // Удаляем старые метки и маршруты
+                markers.forEach(m => myMap.removeLayer(m));
+                markers = [];
+                
+                if (routeLayer) {
+                    myMap.removeLayer(routeLayer);
+                    routeLayer = null;
+                }
+
+                // Добавляем новые метки
+                data.markers.forEach(marker => {
+                    const m = L.marker([marker.coords[0], marker.coords[1]])
+                        .bindPopup(marker.name)
+                        .addTo(myMap);
+                    markers.push(m);
+                });
+
+                // Отображаем информацию о маршруте
+                document.getElementById('route-info').style.display = 'block';
+                document.getElementById('current-route-name').textContent = data.routeName || 'Маршрут без названия';
+                document.getElementById('current-route-length').textContent = (data.routeLength / 1000).toFixed(2) + ' км';
+                document.getElementById('current-markers-count').textContent = data.markers.length;
+
+                // Строим маршрут
+                if (data.markers.length > 1) {
+                    if (data.useRoads) {
+                        // Строим маршрут по дорогам через OSRM
+                        const coords = data.markers.map(m => `${m.coords[1]},${m.coords[0]}`).join(';');
+                        
+                        fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`)
+                            .then(response => response.json())
+                            .then(routeData => {
+                                if (routeData.code === 'Ok') {
+                                    const route = routeData.routes[0];
+                                    const coordinates = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+                                    
+                                    routeLayer = L.polyline(coordinates, {
+                                        color: '#FF0000',
+                                        weight: 5,
+                                        opacity: 0.8
+                                    }).addTo(myMap);
+                                    
+                                    myMap.fitBounds(routeLayer.getBounds());
+                                } else {
+                                    drawStraightLines(data.markers);
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Ошибка построения маршрута:', error);
+                                drawStraightLines(data.markers);
+                            });
+                    } else {
+                        drawStraightLines(data.markers);
+                    }
+                } else if (data.markers.length === 1) {
+                    myMap.setView([data.markers[0].coords[0], data.markers[0].coords[1]], 15);
+                }
+            })
+            .catch(error => {
+                console.error("Ошибка при загрузке меток:", error);
+                alert('Ошибка при загрузке маршрута');
+            });
+    }
+
+    // Функция для рисования прямых линий между точками
+    function drawStraightLines(markersData) {
+        const latlngs = markersData.map(m => [m.coords[0], m.coords[1]]);
+        
+        routeLayer = L.polyline(latlngs, {
+            color: '#FF0000',
+            weight: 5
+        }).addTo(myMap);
+        
+        myMap.fitBounds(routeLayer.getBounds());
+    }
+
+    // Удаление сохранённого маршрута
+    function deleteSession(sessionId, button) {
+        if (!confirm('Точно удалить этот маршрут?')) {
+            return;
+        }
+
+        fetch(`/delete-session/${sessionId}`, {
+            method: 'POST'
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                alert(data.error);
+                return;
+            }
+
+            // Удаляем карточку маршрута из списка
+            const card = button.closest('.card');
+            if (card) {
+                card.remove();
+            }
+
+            alert('Маршрут удалён.');
+        })
+        .catch(error => {
+            console.error('Ошибка при удалении маршрута:', error);
+            alert('Ошибка при удалении маршрута.');
+        });
+    }
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

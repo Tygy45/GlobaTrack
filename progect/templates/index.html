@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Мир Карт</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <style>
+        html, body {
+            height: 100%;
+            margin: 0;
+            padding: 0;
+        }
+        #map {
+            width: 55%;
+            max-width: 900px;
+            min-width: 320px;
+            height: 300px;
+            margin: 6px auto 10px;
+            border-radius: 10px;
+        }
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
+        }
+        .route-info {
+            background: rgba(255, 255, 255, 0.9);
+            color: #000;
+            padding: 10px 12px;
+            border-radius: 10px;
+            margin: 10px auto;
+            max-width: 420px;
+        }
+    </style>
+</head>
+<body class="bg-image text-white" style="background-image: url('static/img/bg.png'); background-size: cover; background-repeat: no-repeat; background-position: center; min-height: 100vh; margin: 0;">
+
+<header class="py-1">
+    <div class="container">
+        <ul class="nav nav-pills justify-content-center">
+            <li class="nav-item"><a href="/index" class="nav-link active">Главная</a></li>
+            <li class="nav-item"><a href="/support" class="nav-link">Поддержка</a></li>
+            <li class="nav-item"><a href="/profile" class="nav-link">Маршруты пользователей</a></li>
+        </ul>
+    </div>
+</header>
+
+<main class="container text-center py-1">
+    <h1 class="display-3 fw-bold">Мир Карт</h1>
+    <h2 class="display-6">Наш сайт предлагает вам составить свое путешествие!</h2>
+</main>
+
+<!-- Поиск места -->
+<div class="container mb-1">
+    <div class="row justify-content-center">
+        <div class="col-md-6 col-lg-5">
+            <div class="input-group">
+                <input type="text" id="header-search-input" class="form-control" placeholder="Поиск места...">
+                <button id="header-search-btn" class="btn btn-primary">Найти</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Контейнер для кнопок -->
+<div class="button-container">
+    <button id="toggle-route-mode" class="btn btn-info">Режим: Прямые линии</button>
+    <button id="clear-markers" class="btn btn-danger">Удалить все метки</button>
+    <button id="save-to-db" class="btn btn-warning">Сохранить маршрут</button>
+</div>
+
+<!-- Информация о маршруте -->
+<div class="route-info">
+    <h5>Информация о маршруте</h5>
+    <p><strong>Длина маршрута:</strong> <span id="route-length">0 км</span></p>
+    <p><strong>Количество точек:</strong> <span id="markers-count">0</span></p>
+</div>
+
+<!-- Контейнер для карты -->
+<div id="map"></div>
+
+
+<!-- Leaflet JS -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<script>
+    let myMap;
+    let markers = [];
+    let sessionMarkers = [];
+    let useRoads = false;
+    let routeLayer = null;
+    let totalDistance = 0;
+
+    // Инициализация карты без атрибуции
+    myMap = L.map('map', {
+        attributionControl: false
+    }).setView([55.76, 37.64], 10);
+
+    // Добавляем слой OpenStreetMap
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19
+    }).addTo(myMap);
+
+    // Обработчик клика по карте
+    myMap.on('click', function(e) {
+        addMarker(e.latlng.lat, e.latlng.lng);
+    });
+
+    // Функция добавления метки (без названий)
+    function addMarker(lat, lng) {
+        const marker = L.marker([lat, lng], {
+            draggable: false
+        }).addTo(myMap);
+
+        markers.push(marker);
+        
+        sessionMarkers.push({
+            coords: [lat, lng],
+            name: '',
+            photo: null
+        });
+
+        connectMarkers();
+        updateRouteInfo();
+    }
+
+    // Поиск места
+    document.getElementById('header-search-btn').addEventListener('click', searchPlace);
+    document.getElementById('header-search-input').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') searchPlace();
+    });
+
+    function searchPlace() {
+        const query = document.getElementById('header-search-input').value.trim();
+        if (!query) {
+            alert('Введите адрес или название места');
+            return;
+        }
+
+        const btn = document.getElementById('header-search-btn');
+        btn.textContent = 'Поиск...';
+        btn.disabled = true;
+
+        // Используем Nominatim API для геокодирования
+        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`)
+            .then(response => response.json())
+            .then(data => {
+                btn.textContent = 'Найти';
+                btn.disabled = false;
+
+                if (data.length === 0) {
+                    alert('Место не найдено. Попробуйте другой запрос.');
+                    return;
+                }
+
+                const result = data[0];
+                const lat = parseFloat(result.lat);
+                const lng = parseFloat(result.lon);
+                myMap.setView([lat, lng], 15);
+                addMarker(lat, lng);
+
+                document.getElementById('header-search-input').value = '';
+            })
+            .catch(error => {
+                btn.textContent = 'Найти';
+                btn.disabled = false;
+                console.error('Ошибка поиска:', error);
+                alert('Ошибка при поиске. Проверьте подключение к интернету.');
+            });
+    }
+
+    // Переключение режима маршрута
+    document.getElementById('toggle-route-mode').addEventListener('click', function() {
+        useRoads = !useRoads;
+        this.textContent = useRoads ? 'Режим: По дорогам' : 'Режим: Прямые линии';
+        this.className = useRoads ? 'btn btn-success' : 'btn btn-info';
+        
+        if (sessionMarkers.length > 1) {
+            connectMarkers();
+        }
+    });
+
+    // Удаление всех меток
+    document.getElementById('clear-markers').addEventListener('click', function() {
+        markers.forEach(m => myMap.removeLayer(m));
+        markers = [];
+        sessionMarkers = [];
+        totalDistance = 0;
+        
+        if (routeLayer) {
+            myMap.removeLayer(routeLayer);
+            routeLayer = null;
+        }
+        
+        updateRouteInfo();
+        alert('Все метки удалены!');
+    });
+
+    // Сохранение маршрута
+    document.getElementById('save-to-db').addEventListener('click', function() {
+        if (sessionMarkers.length === 0) {
+            alert('Добавьте хотя бы одну точку на карту!');
+            return;
+        }
+
+        const routeName = prompt('Введите название маршрута:', 'Мой маршрут');
+        if (!routeName) return;
+
+        fetch('/save-markers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                markers: sessionMarkers,
+                routeName: routeName,
+                routeLength: totalDistance,
+                useRoads: useRoads
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            alert('Маршрут "' + routeName + '" успешно сохранен!');
+            
+            markers.forEach(m => myMap.removeLayer(m));
+            markers = [];
+            sessionMarkers = [];
+            totalDistance = 0;
+            
+            if (routeLayer) {
+                myMap.removeLayer(routeLayer);
+                routeLayer = null;
+            }
+            
+            updateRouteInfo();
+        })
+        .catch(error => {
+            console.error('Ошибка:', error);
+            alert('Ошибка при сохранении маршрута.');
+        });
+    });
+
+    // Соединение меток
+    function connectMarkers() {
+        if (routeLayer) {
+            myMap.removeLayer(routeLayer);
+            routeLayer = null;
+        }
+
+        if (sessionMarkers.length < 2) {
+            totalDistance = 0;
+            updateRouteInfo();
+            return;
+        }
+
+        if (useRoads) {
+            // Построение маршрута по дорогам через OSRM
+            const coords = sessionMarkers.map(m => `${m.coords[1]},${m.coords[0]}`).join(';');
+            
+            fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.code !== 'Ok') {
+                        alert('Не удалось построить маршрут по дорогам. Переключаюсь на прямые линии.');
+                        useRoads = false;
+                        document.getElementById('toggle-route-mode').textContent = 'Режим: Прямые линии';
+                        document.getElementById('toggle-route-mode').className = 'btn btn-info';
+                        connectMarkers();
+                        return;
+                    }
+
+                    const route = data.routes[0];
+                    totalDistance = route.distance;
+                    
+                    const coordinates = route.geometry.coordinates.map(coord => [coord[1], coord[0]]);
+                    
+                    routeLayer = L.polyline(coordinates, {
+                        color: '#FF0000',
+                        weight: 5,
+                        opacity: 0.8
+                    }).addTo(myMap);
+                    
+                    updateRouteInfo();
+                })
+                .catch(error => {
+                    console.error('Ошибка построения маршрута:', error);
+                    alert('Ошибка построения маршрута по дорогам. Переключаюсь на прямые линии.');
+                    useRoads = false;
+                    document.getElementById('toggle-route-mode').textContent = 'Режим: Прямые линии';
+                    document.getElementById('toggle-route-mode').className = 'btn btn-info';
+                    connectMarkers();
+                });
+        } else {
+            // Прямые линии
+            const latlngs = sessionMarkers.map(m => [m.coords[0], m.coords[1]]);
+            
+            routeLayer = L.polyline(latlngs, {
+                color: '#FF0000',
+                weight: 5
+            }).addTo(myMap);
+            
+            // Вычисляем расстояние
+            totalDistance = 0;
+            for (let i = 1; i < latlngs.length; i++) {
+                const from = L.latLng(latlngs[i-1]);
+                const to = L.latLng(latlngs[i]);
+                totalDistance += from.distanceTo(to);
+            }
+            
+            updateRouteInfo();
+        }
+    }
+
+    // Обновление информации о маршруте
+    function updateRouteInfo() {
+        document.getElementById('markers-count').textContent = sessionMarkers.length;
+        document.getElementById('route-length').textContent = (totalDistance / 1000).toFixed(2) + ' км';
+    }
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>
