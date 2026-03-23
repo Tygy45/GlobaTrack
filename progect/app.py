@@ -7,12 +7,13 @@ from datetime import datetime
 app = Flask(__name__)
 
 # Настройка базы данных (SQLite)
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///markers.db'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app.config['SQLALCHEMY_DATABASE_URI'] = f'sqlite:///{os.path.join(BASE_DIR, "markers.db")}'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
 # Секретный ключ для работы с сессиями
-app.secret_key = 'your_secret_key_here'
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-key-for-testing')
 
 # Модель для таблицы пользователей
 class User(db.Model):
@@ -226,4 +227,4 @@ def save_markers():
         return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    app.run(debug=True, port=2000)
+    app.run(debug=False, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
